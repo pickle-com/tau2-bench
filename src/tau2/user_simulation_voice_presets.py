@@ -9,7 +9,9 @@ The complexity level represents how challenging the user is for the agent to han
 Used by run.py and audio effects scheduler.
 """
 
+import hashlib
 import json
+import os
 import random
 from pathlib import Path
 from typing import Optional
@@ -508,6 +510,27 @@ class TaskVoiceConfigs(BaseModel):
         return task_configs.get(complexity)
 
 
+def stable_task_seed(base_seed: int, task_id: str, modulo: int = 1000000) -> int:
+    """Return a process-stable per-task voice seed.
+
+    Python's built-in ``hash(str)`` is salted per interpreter process. Voice
+    sampling needs the same task id and base seed to produce the same audio
+    effects across benchmark runs, so use a stable digest instead.
+    """
+    digest = hashlib.blake2b(
+        str(task_id).encode("utf-8"),
+        digest_size=8,
+        person=b"tau2voice",
+    ).digest()
+    return base_seed + (int.from_bytes(digest, "big") % modulo)
+
+
+def task_voice_seed(base_seed: int, task_id: str, modulo: int = 1000000) -> int:
+    if os.environ.get("TAU2_OFFICIAL_PYTHON_HASH_VOICE_SEED") == "1":
+        return base_seed + hash(task_id) % modulo
+    return stable_task_seed(base_seed, task_id, modulo)
+
+
 def generate_task_voice_configs(
     task_set_name: str,
     base_seed: int,
@@ -517,11 +540,12 @@ def generate_task_voice_configs(
     """Generate pre-sampled voice configs for all tasks in a task set.
 
     Generates configs for all complexity levels (control, regular) for each task.
-    Each task gets a deterministic seed based on base_seed + hash(task.id).
+    Each task gets a deterministic seed based on base_seed and task.id.
 
     Args:
         task_set_name: Name of the task set (e.g., "telecom", "airline").
-        base_seed: Base random seed. Each task gets seed = base_seed + hash(task.id) % 1000000.
+        base_seed: Base random seed. Each task gets a process-stable per-task
+            seed derived from base_seed and task.id.
         synthesis_config: Base synthesis config. If None, uses defaults.
         task_split_name: Optional task split to filter tasks.
 
@@ -539,7 +563,7 @@ def generate_task_voice_configs(
     configs: dict[str, TaskVoiceConfigsByComplexity] = {}
     for task in tasks:
         # Deterministic seed per task (same logic as run_task)
-        task_seed = base_seed + hash(task.id) % 1000000
+        task_seed = task_voice_seed(base_seed, task.id)
 
         # Sample for each complexity level
         task_configs: dict[str, SampledVoiceConfig] = {}
@@ -704,7 +728,7 @@ def generate_task_voice_configs_for_levels(
 
     configs: dict[str, TaskVoiceConfigsByComplexity] = {}
     for task in tasks:
-        task_seed = base_seed + hash(task.id) % 1000000
+        task_seed = task_voice_seed(base_seed, task.id)
 
         task_configs: dict[str, SampledVoiceConfig] = {}
         for complexity in complexity_levels:

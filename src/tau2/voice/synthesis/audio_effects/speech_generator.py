@@ -4,12 +4,16 @@
 import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
+from os import getenv
 from pathlib import Path
 from typing import Optional
 
 from loguru import logger
 
-from tau2.config import DEFAULT_TELEPHONY_RATE
+from tau2.config import (
+    DEFAULT_ELEVENLABS_OUT_OF_TURN_TTS_MAX_WORKERS,
+    DEFAULT_TELEPHONY_RATE,
+)
 from tau2.data_model.audio import AudioData
 from tau2.data_model.audio_effects import UserSpeechInsert
 from tau2.data_model.voice import SynthesisConfig
@@ -20,6 +24,22 @@ from tau2.voice.utils.audio_preprocessing import resample_audio
 from tau2.voice.utils.probability import poisson_should_trigger
 
 from .noise_generator import BackgroundNoiseGenerator, create_background_noise_generator
+
+
+def _get_out_of_turn_tts_max_workers() -> int:
+    """Return local TTS pre-generation worker cap."""
+    raw_value = getenv("TAU2_ELEVENLABS_OUT_OF_TURN_TTS_MAX_WORKERS")
+    if raw_value is None:
+        return DEFAULT_ELEVENLABS_OUT_OF_TURN_TTS_MAX_WORKERS
+    try:
+        return max(1, int(raw_value))
+    except ValueError:
+        logger.warning(
+            "Invalid TAU2_ELEVENLABS_OUT_OF_TURN_TTS_MAX_WORKERS="
+            f"{raw_value!r}; using "
+            f"{DEFAULT_ELEVENLABS_OUT_OF_TURN_TTS_MAX_WORKERS}"
+        )
+        return DEFAULT_ELEVENLABS_OUT_OF_TURN_TTS_MAX_WORKERS
 
 
 class OutOfTurnSpeechGenerator:
@@ -64,7 +84,12 @@ class OutOfTurnSpeechGenerator:
         self.items = items
         logger.info(f"OutOfTurnSpeechGenerator: loading {len(items)} items")
 
-        with ThreadPoolExecutor(max_workers=min(len(items), 10)) as executor:
+        max_workers = min(len(items), _get_out_of_turn_tts_max_workers())
+        logger.info(
+            f"OutOfTurnSpeechGenerator: using {max_workers} TTS worker(s)"
+        )
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = [executor.submit(self._generate_item, item) for item in items]
 
             for future in as_completed(futures):

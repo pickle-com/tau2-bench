@@ -31,6 +31,7 @@ from tau2.user.user_simulator import DummyUser, UserSimulator
 from tau2.user.user_simulator_base import FullDuplexUser, HalfDuplexUser
 from tau2.user_simulation_voice_presets import (
     get_or_load_task_voice_config,
+    task_voice_seed,
 )
 
 # =============================================================================
@@ -208,8 +209,8 @@ def build_voice_user(
             Deep copied internally to avoid mutation.
         persona_config: Persona configuration. If None, derived from sampled voice config.
         speech_complexity: Speech environment complexity level.
-        seed: Base seed for voice config sampling. Per-task seed is derived as
-            seed + hash(task.id) % 1000000.
+        seed: Base seed for voice config sampling. Per-task seed is derived
+            deterministically from seed and task.id.
         domain: Domain name (used for loading pre-sampled voice configs).
             If None, extracted from environment.
         hallucination_feedback: Optional feedback from a previous hallucination
@@ -237,7 +238,7 @@ def build_voice_user(
         )
 
     # Get voice config for this task (from pre-sampled file or sample on the fly)
-    task_seed = seed + hash(task.id) % 1000000
+    task_seed = task_voice_seed(seed, task.id)
     sampled_voice_config = get_or_load_task_voice_config(
         domain=domain,
         task_id=task.id,
