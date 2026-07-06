@@ -45,8 +45,8 @@ from tau2.config import (
 from tau2.data_model.message import ToolCall
 from tau2.environment.tool import Tool
 from tau2.voice.audio_native.adapter import DiscreteTimeAdapter
-from tau2.voice.audio_native.audio_converter import StreamingTelephonyConverter
 from tau2.voice.audio_native.async_loop import BackgroundAsyncLoop
+from tau2.voice.audio_native.audio_converter import StreamingTelephonyConverter
 from tau2.voice.audio_native.tick_result import (
     TickResult,
     UtteranceTranscript,
