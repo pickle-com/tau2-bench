@@ -140,11 +140,18 @@ def validate_submission_traj_set(
         domain_names.add(domain)
     agent_user_info = None
     for results in all_results:
+        audio_native_config = (
+            results.info.audio_native_config.model_dump(mode="json")
+            if results.info.audio_native_config is not None
+            else None
+        )
         res_agent_user_info = {
             "llm_agent": results.info.agent_info.llm,
             "llm_args_agent": results.info.agent_info.llm_args,
             "llm_user": results.info.user_info.llm,
             "llm_args_user": results.info.user_info.llm_args,
+            "speech_complexity": results.info.speech_complexity,
+            "audio_native_config": audio_native_config,
         }
         if agent_user_info is None:
             agent_user_info = res_agent_user_info

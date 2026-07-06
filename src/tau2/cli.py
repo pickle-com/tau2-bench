@@ -239,6 +239,18 @@ def add_run_args(parser):
         "This enables full-duplex voice simulation using audio native APIs.",
     )
     parser.add_argument(
+        "--preflight-only",
+        action="store_true",
+        default=False,
+        help="For audio-native runs, check required credentials and voice IDs, then exit before running simulations.",
+    )
+    parser.add_argument(
+        "--skip-voice-id-check",
+        action="store_true",
+        default=False,
+        help="When using --preflight-only, skip local TAU2_VOICE_ID_* checks for Sierra-managed final runs.",
+    )
+    parser.add_argument(
         "--audio-native-provider",
         type=str,
         choices=["openai", "gemini", "xai", "livekit"],
@@ -711,6 +723,9 @@ def main():
         if args.user_persona:
             user_persona_config = PersonaConfig.from_dict(args.user_persona)  # noqa: F841
 
+        if args.preflight_only and not args.audio_native:
+            raise SystemExit("--preflight-only requires --audio-native")
+
         # Build audio-native config if enabled
         audio_native_config = None
         if args.audio_native:
@@ -819,6 +834,29 @@ def main():
         )
 
         if audio_native_config is not None:
+            if args.preflight_only:
+                from tau2.scripts.check_voice_run_readiness import (
+                    build_readiness_report,
+                    print_text_report,
+                )
+
+                speech_complexity = (
+                    "control"
+                    if args.speech_complexity.startswith("control")
+                    else "regular"
+                )
+                report = build_readiness_report(
+                    provider=args.audio_native_provider,
+                    speech_complexity=speech_complexity,
+                    tool_mentor=args.tool_mentor,
+                    tool_mentor_model=args.tool_mentor_model,
+                    require_voice_ids=not args.skip_voice_id_check,
+                )
+                print_text_report(report)
+                if not report["ok"]:
+                    raise SystemExit(1)
+                return report
+
             config = VoiceRunConfig(
                 **shared_kwargs,
                 audio_native_config=audio_native_config,
