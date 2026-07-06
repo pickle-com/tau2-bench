@@ -104,6 +104,7 @@ DEFAULT_AUDIO_NATIVE_PROVIDER = (
 DEFAULT_TICK_DURATION_SECONDS = 0.20  # overridable
 DEFAULT_MAX_STEPS_SECONDS = 1200  # overridable
 DEFAULT_SEND_AUDIO_INSTANT = False  # overridable
+DEFAULT_TOOL_MENTOR_REALTIME_WORKERS = 5  # overridable
 
 # Turn-taking thresholds (overridable, in seconds, converted to ticks at runtime)
 DEFAULT_WAIT_TO_RESPOND_THRESHOLD_OTHER_SECONDS = 1.0

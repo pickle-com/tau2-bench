@@ -27,6 +27,7 @@ from tau2.config import (
     DEFAULT_SPEECH_COMPLEXITY,
     DEFAULT_TELEPHONY_RATE,
     DEFAULT_TICK_DURATION_SECONDS,
+    DEFAULT_TOOL_MENTOR_REALTIME_WORKERS,
     DEFAULT_USER_IMPLEMENTATION,
     DEFAULT_WAIT_TO_RESPOND_THRESHOLD_OTHER_SECONDS,
     DEFAULT_WAIT_TO_RESPOND_THRESHOLD_SELF_SECONDS,
@@ -194,11 +195,12 @@ def add_run_args(parser):
         "--llm-log-mode",
         type=str,
         choices=["all", "latest"],
-        default=DEFAULT_LLM_LOG_MODE,
+        default=None,
         help="LLM debug logging mode. Only takes effect when --verbose-logs is enabled. "
         "'all' saves every LLM call (can generate many files), "
         "'latest' keeps only the most recent call of each type (saves space). "
-        f"Default is '{DEFAULT_LLM_LOG_MODE}'. Ignored if --verbose-logs is not specified.",
+        f"Default is 'all' for --tool-mentor runs and '{DEFAULT_LLM_LOG_MODE}' otherwise. "
+        "Ignored if --verbose-logs is not specified.",
     )
     parser.add_argument(
         "--max-retries",
@@ -263,6 +265,92 @@ def add_run_args(parser):
         choices=["minimal", "low", "medium", "high", "xhigh"],
         default=None,
         help="Reasoning effort for thinking models. Only applies to providers that support it (e.g. OpenAI).",
+    )
+    parser.add_argument(
+        "--tool-mentor",
+        action="store_true",
+        default=False,
+        help="Enable custom frontier tool-boundary mentor for audio-native agent tool calls.",
+    )
+    parser.add_argument(
+        "--tool-mentor-model",
+        type=str,
+        default=DEFAULT_LLM_AGENT,
+        help=f"LLM model for --tool-mentor. Default is {DEFAULT_LLM_AGENT}.",
+    )
+    parser.add_argument(
+        "--tool-mentor-reasoning-effort",
+        type=str,
+        choices=["none", "minimal", "low", "medium", "high", "xhigh"],
+        default=None,
+        help="Reasoning effort for the --tool-mentor LLM when the model supports it.",
+    )
+    parser.add_argument(
+        "--tool-mentor-mode",
+        type=str,
+        choices=["llm", "heuristic"],
+        default="llm",
+        help="Tool mentor implementation mode. Use 'heuristic' for offline development tests.",
+    )
+    parser.add_argument(
+        "--tool-mentor-read-timeout",
+        type=float,
+        default=7.0,
+        help="Post-read mentor note deadline in seconds.",
+    )
+    parser.add_argument(
+        "--tool-mentor-write-timeout",
+        type=float,
+        default=7.0,
+        help="Pre-write mentor gate deadline in seconds.",
+    )
+    parser.add_argument(
+        "--tool-mentor-realtime-wait",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Run tool-mentor tool execution in the background so audio-native "
+            "ticks continue while the agent waits for tool results."
+        ),
+    )
+    parser.add_argument(
+        "--tool-mentor-realtime-workers",
+        type=int,
+        default=DEFAULT_TOOL_MENTOR_REALTIME_WORKERS,
+        help="Parallel tool-job workers for --tool-mentor-realtime-wait.",
+    )
+    parser.add_argument(
+        "--tool-mentor-realtime-read-workers",
+        type=int,
+        default=None,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--tool-mentor-escalation-tools",
+        nargs="*",
+        default=None,
+        help=(
+            "Agent tool names routed through the mentor pre-execution gate as "
+            "hand-off/give-up actions. Defaults to transfer_to_human_agents; "
+            "pass with no values to disable escalation gating."
+        ),
+    )
+    parser.add_argument(
+        "--tool-mentor-stop-interception",
+        dest="tool_mentor_stop_interception",
+        action="store_true",
+        default=None,
+        help=(
+            "Defer conversation termination for a pre-gated stop tool to the "
+            "mentor gate outcome (default on when the mentor is enabled)."
+        ),
+    )
+    parser.add_argument(
+        "--no-tool-mentor-stop-interception",
+        dest="tool_mentor_stop_interception",
+        action="store_false",
+        default=None,
+        help="Keep official stop-at-proposal semantics even for gated stop tools.",
     )
     parser.add_argument(
         "--tick-duration",
@@ -665,7 +753,37 @@ def main():
                 xai_audio_format=args.xai_audio_format,
                 # Agent behavior
                 use_xml_prompt=use_xml_prompt,
+                tool_mentor_enabled=args.tool_mentor,
+                tool_mentor_model=args.tool_mentor_model,
+                tool_mentor_reasoning_effort=args.tool_mentor_reasoning_effort,
+                tool_mentor_mode=args.tool_mentor_mode,
+                tool_mentor_read_timeout_seconds=args.tool_mentor_read_timeout,
+                tool_mentor_write_timeout_seconds=args.tool_mentor_write_timeout,
+                tool_mentor_realtime_wait=args.tool_mentor_realtime_wait,
+                tool_mentor_realtime_workers=(
+                    args.tool_mentor_realtime_read_workers
+                    or args.tool_mentor_realtime_workers
+                ),
+                **(
+                    {"tool_mentor_escalation_tools": args.tool_mentor_escalation_tools}
+                    if args.tool_mentor_escalation_tools is not None
+                    else {}
+                ),
+                **(
+                    {
+                        "tool_mentor_stop_interception": (
+                            args.tool_mentor_stop_interception
+                        )
+                    }
+                    if args.tool_mentor_stop_interception is not None
+                    else {}
+                ),
             )
+
+        if args.llm_log_mode is None:
+            args.llm_log_mode = "all" if args.tool_mentor else DEFAULT_LLM_LOG_MODE
+        if args.tool_mentor:
+            args.verbose_logs = True
 
         # Set global LLM log mode (used by verbose logging)
         from tau2.utils.llm_utils import set_llm_log_mode

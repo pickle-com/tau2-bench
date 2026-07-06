@@ -464,6 +464,15 @@ def build_voice_orchestrator(
 
     environment = build_environment(domain, env_kwargs=env_kwargs)
 
+    if (
+        config.audio_native_config.tool_mentor_enabled
+        and config.audio_native_config.provider not in {"openai", "xai"}
+    ):
+        raise ValueError(
+            "Tool mentor synthetic context delivery is currently implemented "
+            "for openai and xai audio-native providers."
+        )
+
     agent = build_agent(
         config.effective_agent,
         environment,
@@ -498,6 +507,7 @@ def build_voice_orchestrator(
         simulation_id=simulation_id,
         tick_duration_seconds=config.audio_native_config.tick_duration_seconds,
         timeout=config.timeout,
+        tool_mentor_config=config.audio_native_config,
     )
 
     logger.debug(

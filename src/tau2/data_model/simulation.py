@@ -43,6 +43,7 @@ from tau2.config import (
     DEFAULT_TELEPHONY_RATE,
     DEFAULT_TEXT_STREAMING_CONFIG,
     DEFAULT_TICK_DURATION_SECONDS,
+    DEFAULT_TOOL_MENTOR_REALTIME_WORKERS,
     DEFAULT_USE_LLM_BACKCHANNEL,
     DEFAULT_WAIT_TO_RESPOND_THRESHOLD_OTHER_SECONDS,
     DEFAULT_WAIT_TO_RESPOND_THRESHOLD_SELF_SECONDS,
@@ -190,6 +191,78 @@ class AudioNativeConfig(BaseModel):
         default=DEFAULT_SEND_AUDIO_INSTANT,
         description="If True, send all audio at once per tick. If False (default), stream audio in 20ms chunks at real-time rate.",
     )
+    tool_mentor_enabled: bool = Field(
+        default=False,
+        description="Enable custom agent-side tool boundary mentor for audio-native runs.",
+    )
+    tool_mentor_model: str = Field(
+        default=DEFAULT_LLM_AGENT,
+        description="LLM model used by the custom tool boundary mentor.",
+    )
+    tool_mentor_reasoning_effort: Optional[str] = Field(
+        default=None,
+        description="Reasoning effort for the custom tool boundary mentor LLM.",
+    )
+    tool_mentor_mode: Literal["llm", "heuristic"] = Field(
+        default="llm",
+        description="Mentor implementation mode. 'llm' calls the configured model; 'heuristic' is for offline development tests.",
+    )
+    tool_mentor_read_timeout_seconds: float = Field(
+        default=7.0,
+        description="Deadline for post-read mentor notes.",
+    )
+    tool_mentor_write_timeout_seconds: float = Field(
+        default=7.0,
+        description="Deadline for pre-write mentor gates.",
+    )
+    tool_mentor_realtime_wait: bool = Field(
+        default=True,
+        description=(
+            "When enabled, agent tool calls reviewed by the tool mentor run in a "
+            "background job so simulated audio ticks keep advancing while the "
+            "agent waits for the tool result."
+        ),
+    )
+    tool_mentor_realtime_workers: int = Field(
+        default=DEFAULT_TOOL_MENTOR_REALTIME_WORKERS,
+        ge=1,
+        description="Maximum parallel tool jobs for realtime-wait mentor execution.",
+    )
+    tool_mentor_realtime_read_workers: Optional[int] = Field(
+        default=None,
+        ge=1,
+        exclude=True,
+        description="Deprecated alias for tool_mentor_realtime_workers.",
+    )
+    tool_mentor_max_result_chars: int = Field(
+        default=6000,
+        description="Maximum official tool result characters sent to the mentor.",
+    )
+    tool_mentor_escalation_tools: list[str] = Field(
+        default_factory=lambda: ["transfer_to_human_agents"],
+        description=(
+            "Agent tool names routed through the mentor pre-execution gate as "
+            "hand-off/give-up actions. Disclosed custom-scaffold wiring; an "
+            "empty list disables escalation gating."
+        ),
+    )
+    tool_mentor_stop_interception: bool = Field(
+        default=True,
+        description=(
+            "When the agent's stop tool is pre-gated, defer conversation "
+            "termination to the gate outcome: a blocked proposal delivers "
+            "its mentor note and the conversation continues (identical to a "
+            "blocked write), while an approved proposal executes and "
+            "terminates as usual. Has no effect when the mentor is disabled; "
+            "official stop semantics then apply."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def apply_tool_mentor_worker_alias(self) -> "AudioNativeConfig":
+        if self.tool_mentor_realtime_read_workers is not None:
+            self.tool_mentor_realtime_workers = self.tool_mentor_realtime_read_workers
+        return self
 
     # Derived properties (computed from seconds and tick_duration)
     @property
