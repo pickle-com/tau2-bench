@@ -162,11 +162,11 @@ DEFAULT_GEMINI_INPUT_SAMPLE_RATE = 16000  # fixed, API-defined
 DEFAULT_GEMINI_OUTPUT_SAMPLE_RATE = 24000  # fixed, API-defined
 
 # =============================================================================
-# XAI PROVIDER (overridable voice, fixed API constants)
+# XAI PROVIDER (overridable model/voice, fixed base URL)
 # =============================================================================
 DEFAULT_XAI_REALTIME_BASE_URL = "wss://api.x.ai/v1/realtime"  # fixed
 DEFAULT_XAI_VOICE = "Ara"  # overridable: Ara, Rex, Sal, Eve, Leo
-DEFAULT_XAI_MODEL = "xai-realtime"  # fixed, determined by endpoint
+DEFAULT_XAI_MODEL = "grok-voice-think-fast-1.0"  # overridable
 
 # =============================================================================
 # NOVA PROVIDER (overridable model/voice, fixed API constants)

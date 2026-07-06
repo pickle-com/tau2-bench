@@ -5,7 +5,8 @@ for discrete-time simulation where audio time is the primary clock.
 
 Key features:
 - Tick-based interface via run_tick()
-- Native G.711 μ-law support (NO audio conversion needed!)
+- Native G.711 μ-law support by default
+- Optional 24kHz PCM wire format with telephony conversion
 - Audio capping: max bytes_per_tick of agent audio per tick
 - Audio buffering: excess agent audio carries to next tick
 - Proportional transcript: text distributed based on audio played
@@ -44,6 +45,7 @@ from tau2.config import (
 from tau2.data_model.message import ToolCall
 from tau2.environment.tool import Tool
 from tau2.voice.audio_native.adapter import DiscreteTimeAdapter
+from tau2.voice.audio_native.audio_converter import StreamingTelephonyConverter
 from tau2.voice.audio_native.async_loop import BackgroundAsyncLoop
 from tau2.voice.audio_native.tick_result import (
     TickResult,
@@ -78,8 +80,9 @@ class DiscreteTimeXAIAdapter(DiscreteTimeAdapter):
     with the xAI API, while exposing a synchronous interface for the agent
     and orchestrator.
 
-    Key advantage: xAI natively supports G.711 μ-law at 8kHz, so NO audio
-    conversion is needed! Audio passes through directly.
+    Key advantage: xAI natively supports G.711 μ-law at 8kHz, so the default
+    PCMU path can pass audio through directly. A 24kHz PCM path is also
+    available for provider-format experiments.
 
     Attributes:
         tick_duration_ms: Duration of each tick in milliseconds.
@@ -93,29 +96,58 @@ class DiscreteTimeXAIAdapter(DiscreteTimeAdapter):
         self,
         tick_duration_ms: int,
         send_audio_instant: bool = True,
+        model: Optional[str] = None,
         reasoning_effort: Optional[str] = None,
         provider: Optional[XAIRealtimeProvider] = None,
         voice: str = "Ara",
+        xai_audio_format: str = "pcmu",
     ):
         """Initialize the discrete-time xAI adapter.
 
         Args:
             tick_duration_ms: Duration of each tick in milliseconds. Must be > 0.
             send_audio_instant: If True, send audio in one call (discrete-time mode).
-            reasoning_effort: Not supported by xAI. Must be None.
+            model: xAI voice model passed as a WebSocket query parameter.
+            reasoning_effort: Optional xAI reasoning effort. Supports "high" and "none".
             provider: Optional provider instance. Created lazily if not provided.
             voice: Voice to use. One of: Ara, Rex, Sal, Eve, Leo. Default: Ara.
+            xai_audio_format: Provider wire audio format. "pcmu" preserves the
+                public adapter path; "pcm24" uses 24kHz PCM with conversion.
         """
-        if reasoning_effort is not None:
+        if reasoning_effort not in {None, "high", "none"}:
             raise ValueError(
-                f"xAI provider does not support reasoning_effort (got '{reasoning_effort}')"
+                "xAI provider supports reasoning_effort='high', 'none', or None "
+                f"(got {reasoning_effort!r})"
+            )
+        if xai_audio_format not in {"pcmu", "pcm24"}:
+            raise ValueError(
+                "xAI provider supports xai_audio_format='pcmu' or 'pcm24' "
+                f"(got {xai_audio_format!r})"
             )
         super().__init__(tick_duration_ms, send_audio_instant=send_audio_instant)
 
-        self._chunk_size = int(
-            self.audio_format.bytes_per_second * self._voip_interval_ms / 1000
-        )
+        self.model = model
+        self.reasoning_effort = reasoning_effort
         self.voice = voice
+        self.xai_audio_format = xai_audio_format
+        self._provider_audio_format = (
+            XAIAudioFormat.PCM if xai_audio_format == "pcm24" else XAIAudioFormat.PCMU
+        )
+        self._provider_sample_rate = 24000 if xai_audio_format == "pcm24" else 8000
+        provider_bytes_per_second = (
+            self._provider_sample_rate * 2
+            if self._provider_audio_format == XAIAudioFormat.PCM
+            else self.audio_format.bytes_per_second
+        )
+        self._chunk_size = int(provider_bytes_per_second * self._voip_interval_ms / 1000)
+        self._audio_converter: Optional[StreamingTelephonyConverter] = (
+            StreamingTelephonyConverter(
+                input_sample_rate=self._provider_sample_rate,
+                output_sample_rate=self._provider_sample_rate,
+            )
+            if self._provider_audio_format == XAIAudioFormat.PCM
+            else None
+        )
 
         # Provider - created lazily if not provided
         self._provider = provider
@@ -130,8 +162,11 @@ class DiscreteTimeXAIAdapter(DiscreteTimeAdapter):
         """Get the provider, creating it if needed."""
         if self._provider is None:
             self._provider = XAIRealtimeProvider(
+                model=self.model,
+                reasoning_effort=self.reasoning_effort,
                 voice=self.voice,
-                audio_format=XAIAudioFormat.PCMU,  # G.711 μ-law
+                audio_format=self._provider_audio_format,
+                sample_rate=self._provider_sample_rate,
             )
         return self._provider
 
@@ -213,6 +248,8 @@ class DiscreteTimeXAIAdapter(DiscreteTimeAdapter):
         self._tick_count = 0
         self._cumulative_user_audio_ms = 0
         self.clear_buffers()
+        if self._audio_converter is not None:
+            self._audio_converter.reset()
         logger.info("DiscreteTimeXAIAdapter disconnected")
 
     async def _async_disconnect(self) -> None:
@@ -252,6 +289,15 @@ class DiscreteTimeXAIAdapter(DiscreteTimeAdapter):
             await self.provider.send_tool_result(call_id, result_str, request_response)
         self._pending_tool_results.clear()
 
+    async def _flush_pending_synthetic_agent_contexts(self) -> None:
+        """Send pending synthetic mentor contexts to xAI."""
+        for content, request_response in self._pending_synthetic_agent_contexts:
+            await self.provider.send_synthetic_agent_context(
+                content,
+                request_response,
+            )
+        self._pending_synthetic_agent_contexts.clear()
+
     async def _execute_tick(
         self,
         user_audio: bytes,
@@ -266,9 +312,15 @@ class DiscreteTimeXAIAdapter(DiscreteTimeAdapter):
             remaining = max(0.01, (self.tick_duration_ms / 1000) - elapsed_so_far)
             return await self.provider.receive_events_for_duration(remaining)
 
+        provider_audio = (
+            self._audio_converter.convert_input(user_audio)
+            if self._audio_converter is not None
+            else user_audio
+        )
+
         _, events = await asyncio.gather(
             self._send_audio_chunked(
-                user_audio, self.provider.send_audio, self._chunk_size
+                provider_audio, self.provider.send_audio, self._chunk_size
             ),
             receive_events(),
         )
@@ -286,12 +338,21 @@ class DiscreteTimeXAIAdapter(DiscreteTimeAdapter):
             # Skip audio from truncated item
             if result.skip_item_id is not None and item_id == result.skip_item_id:
                 # Decode and count discarded bytes
-                audio_bytes = base64.b64decode(event.delta) if event.delta else b""
+                provider_audio = base64.b64decode(event.delta) if event.delta else b""
+                audio_bytes = (
+                    self._audio_converter.convert_output(provider_audio)
+                    if self._audio_converter is not None
+                    else provider_audio
+                )
                 result.truncated_audio_bytes += len(audio_bytes)
                 return
 
-            # Decode base64 audio (already in G.711 μ-law format!)
-            audio_bytes = base64.b64decode(event.delta) if event.delta else b""
+            provider_audio = base64.b64decode(event.delta) if event.delta else b""
+            audio_bytes = (
+                self._audio_converter.convert_output(provider_audio)
+                if self._audio_converter is not None
+                else provider_audio
+            )
             if audio_bytes:
                 result.agent_audio_chunks.append((audio_bytes, item_id))
 
@@ -321,6 +382,8 @@ class DiscreteTimeXAIAdapter(DiscreteTimeAdapter):
                 buffered_bytes = sum(len(c[0]) for c in self._buffered_agent_audio)
                 result.truncated_audio_bytes += buffered_bytes
                 self._buffered_agent_audio.clear()
+            if self._audio_converter is not None:
+                self._audio_converter.reset_output()
 
             # Mark truncation
             result.was_truncated = True
@@ -346,6 +409,14 @@ class DiscreteTimeXAIAdapter(DiscreteTimeAdapter):
             result.vad_events.append("speech_stopped")
 
         elif isinstance(event, XAIInputTranscriptionCompletedEvent):
+            if event.transcript:
+                result.input_audio_transcripts.append(
+                    {
+                        "item_id": event.item_id,
+                        "content_index": getattr(event, "content_index", None),
+                        "transcript": event.transcript,
+                    }
+                )
             logger.debug(f"Input transcription: {event.transcript}")
 
         elif isinstance(event, XAIResponseDoneEvent):

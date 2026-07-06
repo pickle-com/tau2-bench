@@ -352,6 +352,40 @@ def add_run_args(parser):
         default=DEFAULT_SILENCE_ANNOTATION_THRESHOLD_SECONDS,
         help=f"Silence threshold for adding annotations to conversation history (seconds). Default is {DEFAULT_SILENCE_ANNOTATION_THRESHOLD_SECONDS}.",
     )
+    parser.add_argument(
+        "--xai-vad-threshold",
+        type=float,
+        default=None,
+        help="xAI server_vad threshold. Omit to preserve xAI's server default.",
+    )
+    parser.add_argument(
+        "--xai-vad-prefix-padding-ms",
+        type=int,
+        default=None,
+        help="xAI server_vad prefix_padding_ms. Omit to preserve xAI's server default.",
+    )
+    parser.add_argument(
+        "--xai-vad-silence-duration-ms",
+        type=int,
+        default=None,
+        help="xAI server_vad silence_duration_ms. Omit to preserve xAI's server default.",
+    )
+    parser.add_argument(
+        "--xai-vad-idle-timeout-ms",
+        type=int,
+        default=None,
+        help="xAI server_vad idle_timeout_ms. Omit to preserve xAI's server default.",
+    )
+    parser.add_argument(
+        "--xai-audio-format",
+        type=str,
+        choices=["pcmu", "pcm24"],
+        default="pcmu",
+        help=(
+            "xAI audio format. 'pcmu' preserves the public tau2 path; "
+            "'pcm24' uses 24kHz PCM with telephony conversion."
+        ),
+    )
 
     # Audio-native: Agent behavior flags
     # Prompt format
@@ -624,6 +658,11 @@ def main():
                 interruption_check_interval_seconds=args.interruption_check_interval,
                 integration_duration_seconds=args.integration_duration,
                 silence_annotation_threshold_seconds=args.silence_annotation_threshold,
+                xai_vad_threshold=args.xai_vad_threshold,
+                xai_vad_prefix_padding_ms=args.xai_vad_prefix_padding_ms,
+                xai_vad_silence_duration_ms=args.xai_vad_silence_duration_ms,
+                xai_vad_idle_timeout_ms=args.xai_vad_idle_timeout_ms,
+                xai_audio_format=args.xai_audio_format,
                 # Agent behavior
                 use_xml_prompt=use_xml_prompt,
             )

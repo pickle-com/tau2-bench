@@ -211,6 +211,7 @@ class DiscreteTimeAudioNativeAgent(FullDuplexAgent[DiscreteTimeAgentState]):
         use_xml_prompt: bool = False,
         cascaded_config: Optional["CascadedConfig"] = None,
         audio_taps_dir: Optional[Path] = None,
+        xai_audio_format: str = "pcmu",
     ):
         """Initialize the discrete-time audio native agent.
 
@@ -254,6 +255,7 @@ class DiscreteTimeAudioNativeAgent(FullDuplexAgent[DiscreteTimeAgentState]):
         self.reasoning_effort = reasoning_effort
         self.max_inactive_seconds = max_inactive_seconds
         self.cascaded_config = cascaded_config
+        self.xai_audio_format = xai_audio_format
 
         # Audio format (defaults to telephony)
         self.audio_format = audio_format or TELEPHONY_AUDIO_FORMAT
@@ -367,6 +369,7 @@ class DiscreteTimeAudioNativeAgent(FullDuplexAgent[DiscreteTimeAgentState]):
                 reasoning_effort=self.reasoning_effort,
                 audio_format=self.audio_format,
                 cascaded_config=self.cascaded_config,
+                xai_audio_format=self.xai_audio_format,
             )
         return self._adapter
 
@@ -404,6 +407,7 @@ class DiscreteTimeAudioNativeAgent(FullDuplexAgent[DiscreteTimeAgentState]):
         state: DiscreteTimeAgentState,
         participant_chunk: Optional[UserMessage] = None,
         tool_results: Optional[EnvironmentMessage] = None,
+        synthetic_agent_context: Optional[list[dict]] = None,
     ) -> Tuple[AssistantMessage, DiscreteTimeAgentState]:
         """Process one tick of the simulation.
 
@@ -419,6 +423,7 @@ class DiscreteTimeAudioNativeAgent(FullDuplexAgent[DiscreteTimeAgentState]):
             participant_chunk: User message with audio from the user simulator.
             tool_results: Tool results from the environment (ToolMessage or
                 MultiToolMessage). None if no tool results are pending.
+            synthetic_agent_context: Custom mentor notes for the agent provider.
 
         Returns:
             Tuple of (AssistantMessage, updated state).
@@ -427,13 +432,29 @@ class DiscreteTimeAudioNativeAgent(FullDuplexAgent[DiscreteTimeAgentState]):
         """
         # Queue tool results on the adapter so the provider sees them
         # at the start of run_tick, alongside the new user audio.
+        has_synthetic_context = bool(synthetic_agent_context)
         if tool_results is not None:
             if isinstance(tool_results, ToolMessage):
-                self._handle_tool_result(tool_results)
+                self._handle_tool_result(
+                    tool_results,
+                    request_response=not has_synthetic_context,
+                )
             elif isinstance(tool_results, MultiToolMessage):
                 for i, tool_msg in enumerate(tool_results.tool_messages):
-                    is_last = i == len(tool_results.tool_messages) - 1
+                    is_last = (
+                        i == len(tool_results.tool_messages) - 1
+                        and not has_synthetic_context
+                    )
                     self._handle_tool_result(tool_msg, request_response=is_last)
+
+        if synthetic_agent_context:
+            for i, context in enumerate(synthetic_agent_context):
+                request_response = i == len(synthetic_agent_context) - 1
+                content = str(context.get("content", ""))
+                self.adapter.send_synthetic_agent_context(
+                    content=content,
+                    request_response=request_response,
+                )
 
         state.tick_count += 1
 
@@ -805,11 +826,22 @@ def create_discrete_time_audio_native_agent(tools, domain_policy, **kwargs):
     audio_native_config = kwargs.get("audio_native_config")
     audio_taps_dir = kwargs.get("audio_taps_dir")
     if audio_native_config is not None:
+        vad_config = None
+        if audio_native_config.provider == "xai":
+            from tau2.voice.audio_native.xai.provider import XAIVADConfig
+
+            vad_config = XAIVADConfig(
+                threshold=audio_native_config.xai_vad_threshold,
+                prefix_padding_ms=audio_native_config.xai_vad_prefix_padding_ms,
+                silence_duration_ms=audio_native_config.xai_vad_silence_duration_ms,
+                idle_timeout_ms=audio_native_config.xai_vad_idle_timeout_ms,
+            )
         return DiscreteTimeAudioNativeAgent(
             tools=tools,
             domain_policy=domain_policy,
             tick_duration_ms=audio_native_config.tick_duration_ms,
             modality="audio",
+            vad_config=vad_config,
             send_audio_instant=audio_native_config.send_audio_instant,
             provider=audio_native_config.provider,
             model=audio_native_config.model,
@@ -817,6 +849,7 @@ def create_discrete_time_audio_native_agent(tools, domain_policy, **kwargs):
             use_xml_prompt=audio_native_config.use_xml_prompt,
             cascaded_config=getattr(audio_native_config, "cascaded_config", None),
             audio_taps_dir=audio_taps_dir,
+            xai_audio_format=getattr(audio_native_config, "xai_audio_format", "pcmu"),
         )
     else:
         # Fallback: use individual kwargs or defaults

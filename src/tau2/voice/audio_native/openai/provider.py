@@ -126,7 +126,7 @@ class OpenAIRealtimeProvider:
                 environment variable.
             model: Model identifier to use. Defaults to DEFAULT_MODEL.
             reasoning_effort: Reasoning effort for thinking models ("minimal",
-                "low", "medium", "high"). If None, not sent to the API.
+                "low", "medium", "high", "xhigh"). If None, not sent to the API.
 
         Raises:
             ValueError: If no API key is provided or found in environment.
@@ -394,6 +394,26 @@ class OpenAIRealtimeProvider:
                 "type": "function_call_output",
                 "call_id": call_id,
                 "output": result,
+            },
+        }
+        await self.ws.send(json.dumps(item_create))
+
+        if request_response:
+            await self.ws.send(json.dumps({"type": "response.create"}))
+
+    async def send_synthetic_agent_context(
+        self, content: str, request_response: bool = True
+    ) -> None:
+        """Send custom agent-side text context as a synthetic conversation item."""
+        if not self.is_connected:
+            raise RuntimeError("Not connected to API")
+
+        item_create = {
+            "type": "conversation.item.create",
+            "item": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": content}],
             },
         }
         await self.ws.send(json.dumps(item_create))

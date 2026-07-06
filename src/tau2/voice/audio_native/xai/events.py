@@ -37,6 +37,13 @@ class XAIConversationCreatedEvent(BaseXAIEvent):
     conversation: Optional[Dict[str, Any]] = None
 
 
+class XAISessionCreatedEvent(BaseXAIEvent):
+    """First message at connection for OpenAI-compatible xAI sessions."""
+
+    type: Literal["session.created"] = "session.created"
+    session: Optional[Dict[str, Any]] = None
+
+
 class XAISessionUpdatedEvent(BaseXAIEvent):
     """Session configuration has been updated."""
 
@@ -55,6 +62,7 @@ class XAISpeechStartedEvent(BaseXAIEvent):
     type: Literal["input_audio_buffer.speech_started"] = (
         "input_audio_buffer.speech_started"
     )
+    audio_start_ms: Optional[int] = None
     item_id: Optional[str] = None
 
 
@@ -64,6 +72,7 @@ class XAISpeechStoppedEvent(BaseXAIEvent):
     type: Literal["input_audio_buffer.speech_stopped"] = (
         "input_audio_buffer.speech_stopped"
     )
+    audio_end_ms: Optional[int] = None
     item_id: Optional[str] = None
 
 
@@ -92,6 +101,15 @@ class XAIConversationItemAddedEvent(BaseXAIEvent):
     type: Literal["conversation.item.added"] = "conversation.item.added"
     previous_item_id: Optional[str] = None
     item: Optional[Dict[str, Any]] = None
+
+
+class XAIConversationItemTruncatedEvent(BaseXAIEvent):
+    """An assistant audio item was truncated after interruption."""
+
+    type: Literal["conversation.item.truncated"] = "conversation.item.truncated"
+    item_id: Optional[str] = None
+    content_index: Optional[int] = None
+    audio_end_ms: Optional[int] = None
 
 
 class XAIInputTranscriptionCompletedEvent(BaseXAIEvent):
@@ -160,6 +178,13 @@ class XAIResponseDoneEvent(BaseXAIEvent):
 
     type: Literal["response.done"] = "response.done"
     response: Optional[Dict[str, Any]] = None
+
+
+class XAIResponseCancelledEvent(BaseXAIEvent):
+    """Assistant response was cancelled after interruption."""
+
+    type: Literal["response.cancelled"] = "response.cancelled"
+    response_id: Optional[str] = None
 
 
 # =============================================================================
@@ -286,6 +311,7 @@ class XAIUnknownEvent(BaseXAIEvent):
 XAIEvent = Union[
     # Session events
     XAIConversationCreatedEvent,
+    XAISessionCreatedEvent,
     XAISessionUpdatedEvent,
     # VAD events
     XAISpeechStartedEvent,
@@ -294,6 +320,7 @@ XAIEvent = Union[
     XAIInputAudioBufferClearedEvent,
     # Conversation events
     XAIConversationItemAddedEvent,
+    XAIConversationItemTruncatedEvent,
     XAIInputTranscriptionCompletedEvent,
     # Response events
     XAIResponseCreatedEvent,
@@ -302,6 +329,7 @@ XAIEvent = Union[
     XAIResponseContentPartAddedEvent,
     XAIResponseContentPartDoneEvent,
     XAIResponseDoneEvent,
+    XAIResponseCancelledEvent,
     # Audio events
     XAIAudioDeltaEvent,
     XAIAudioDoneEvent,
@@ -325,6 +353,7 @@ XAIEvent = Union[
 _EVENT_TYPE_MAP: Dict[str, type[BaseXAIEvent]] = {
     # Session events
     "conversation.created": XAIConversationCreatedEvent,
+    "session.created": XAISessionCreatedEvent,
     "session.updated": XAISessionUpdatedEvent,
     # VAD events
     "input_audio_buffer.speech_started": XAISpeechStartedEvent,
@@ -333,6 +362,7 @@ _EVENT_TYPE_MAP: Dict[str, type[BaseXAIEvent]] = {
     "input_audio_buffer.cleared": XAIInputAudioBufferClearedEvent,
     # Conversation events
     "conversation.item.added": XAIConversationItemAddedEvent,
+    "conversation.item.truncated": XAIConversationItemTruncatedEvent,
     "conversation.item.input_audio_transcription.completed": XAIInputTranscriptionCompletedEvent,
     # Response events
     "response.created": XAIResponseCreatedEvent,
@@ -341,6 +371,7 @@ _EVENT_TYPE_MAP: Dict[str, type[BaseXAIEvent]] = {
     "response.content_part.added": XAIResponseContentPartAddedEvent,
     "response.content_part.done": XAIResponseContentPartDoneEvent,
     "response.done": XAIResponseDoneEvent,
+    "response.cancelled": XAIResponseCancelledEvent,
     # Audio events
     "response.output_audio.delta": XAIAudioDeltaEvent,
     "response.output_audio.done": XAIAudioDoneEvent,

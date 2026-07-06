@@ -100,6 +100,7 @@ class DiscreteTimeAdapter(ABC):
         self._current_item_id: Optional[str] = None
         self._skip_item_id: Optional[str] = None
         self._pending_tool_results: List[Tuple] = []
+        self._pending_synthetic_agent_contexts: List[Tuple[str, bool]] = []
 
         # Optional item-ID mapping (used by Nova where audio and text have
         # different content IDs). Subclasses that need it should populate this
@@ -167,11 +168,21 @@ class DiscreteTimeAdapter(ABC):
         self._pending_tool_results.append((call_id, result, request_response, is_error))
         logger.debug(f"Queued tool result for call_id={call_id}")
 
+    def send_synthetic_agent_context(
+        self,
+        content: str,
+        request_response: bool = True,
+    ) -> None:
+        """Queue custom agent-side context to be sent in the next tick."""
+        self._pending_synthetic_agent_contexts.append((content, request_response))
+        logger.debug("Queued synthetic agent context")
+
     def clear_buffers(self) -> None:
         """Reset all internal tick state."""
         self._buffered_agent_audio.clear()
         self._utterance_transcripts.clear()
         self._pending_tool_results.clear()
+        self._pending_synthetic_agent_contexts.clear()
         self._skip_item_id = None
 
     # -----------------------------------------------------------------------
@@ -196,6 +207,7 @@ class DiscreteTimeAdapter(ABC):
 
         # 1. Flush pending tool results
         await self._flush_pending_tool_results()
+        await self._flush_pending_synthetic_agent_contexts()
 
         # 2. Create tick result
         result = TickResult(
@@ -291,6 +303,13 @@ class DiscreteTimeAdapter(ABC):
         """
         raise NotImplementedError
 
+    async def _flush_pending_synthetic_agent_contexts(self) -> None:
+        """Send all pending synthetic agent-context notes to the provider."""
+        if self._pending_synthetic_agent_contexts:
+            raise NotImplementedError(
+                f"{self.__class__.__name__} does not support synthetic agent context"
+            )
+
     # -----------------------------------------------------------------------
     # Shared helpers
     # -----------------------------------------------------------------------
@@ -325,8 +344,8 @@ class DiscreteTimeAdapter(ABC):
 # Adapter factory
 # ---------------------------------------------------------------------------
 
-# Providers where the model is determined by the endpoint, not a parameter
-_PROVIDERS_WITH_ENDPOINT_DETERMINED_MODEL = ("xai",)
+# Providers where the model is determined by the endpoint, not a parameter.
+_PROVIDERS_WITH_ENDPOINT_DETERMINED_MODEL: tuple[str, ...] = ()
 
 
 def create_adapter(
@@ -337,6 +356,7 @@ def create_adapter(
     reasoning_effort: Optional[str] = None,
     audio_format: Optional[AudioFormat] = None,
     cascaded_config: Any = None,
+    xai_audio_format: str = "pcmu",
 ) -> Tuple[DiscreteTimeAdapter, str]:
     """Create a discrete-time adapter for the given provider.
 
@@ -415,7 +435,9 @@ def create_adapter(
         adapter = DiscreteTimeXAIAdapter(
             tick_duration_ms=tick_duration_ms,
             send_audio_instant=send_audio_instant,
+            model=model,
             reasoning_effort=reasoning_effort,
+            xai_audio_format=xai_audio_format,
         )
     elif provider == "nova":
         from tau2.voice.audio_native.nova.discrete_time_adapter import (

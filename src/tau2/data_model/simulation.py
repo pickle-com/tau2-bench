@@ -87,7 +87,7 @@ class AudioNativeConfig(BaseModel):
     )
     reasoning_effort: Optional[str] = Field(
         default=None,
-        description="Reasoning effort for thinking models: 'minimal', 'low', 'medium', 'high'. If None, not sent.",
+        description="Reasoning effort for thinking models: 'minimal', 'low', 'medium', 'high', 'xhigh'. If None, not sent.",
     )
 
     # Timing configuration
@@ -154,6 +154,31 @@ class AudioNativeConfig(BaseModel):
     use_llm_backchannel: bool = Field(
         default=DEFAULT_USE_LLM_BACKCHANNEL,
         description="If True, use LLM-based backchannel policy. If False, use Poisson-based policy with min/max thresholds.",
+    )
+
+    # Provider-specific xAI server VAD tuning. None preserves xAI server defaults.
+    xai_vad_threshold: Optional[float] = Field(
+        default=None,
+        description="xAI server_vad threshold. None preserves the provider default.",
+    )
+    xai_vad_prefix_padding_ms: Optional[int] = Field(
+        default=None,
+        description="xAI server_vad prefix_padding_ms. None preserves the provider default.",
+    )
+    xai_vad_silence_duration_ms: Optional[int] = Field(
+        default=None,
+        description="xAI server_vad silence_duration_ms. None preserves the provider default.",
+    )
+    xai_vad_idle_timeout_ms: Optional[int] = Field(
+        default=None,
+        description="xAI server_vad idle_timeout_ms. None preserves the provider default.",
+    )
+    xai_audio_format: Literal["pcmu", "pcm24"] = Field(
+        default="pcmu",
+        description=(
+            "xAI provider audio format. 'pcmu' preserves the public tau2 adapter "
+            "path; 'pcm24' sends/receives 24kHz PCM with telephony conversion."
+        ),
     )
 
     # Agent behavior

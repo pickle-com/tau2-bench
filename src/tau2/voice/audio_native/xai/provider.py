@@ -18,6 +18,7 @@ import json
 import os
 from enum import Enum
 from typing import AsyncGenerator, Dict, List, Optional
+from urllib.parse import urlencode
 
 import websockets
 from dotenv import load_dotenv
@@ -26,6 +27,7 @@ from pydantic import BaseModel
 
 from tau2.config import (
     DEFAULT_TELEPHONY_RATE,
+    DEFAULT_XAI_MODEL,
     DEFAULT_XAI_REALTIME_BASE_URL,
     DEFAULT_XAI_VOICE,
 )
@@ -64,9 +66,18 @@ class XAIVADConfig(BaseModel):
 
     Attributes:
         mode: VAD mode. Defaults to SERVER_VAD.
+        threshold: Speech detection sensitivity. xAI's documented default is
+            server-controlled when omitted.
+        prefix_padding_ms: Audio to include before speech start.
+        silence_duration_ms: Silence before turn end.
+        idle_timeout_ms: Server-side idle timeout before an empty audio commit.
     """
 
     mode: XAIVADMode = XAIVADMode.SERVER_VAD
+    threshold: Optional[float] = None
+    prefix_padding_ms: Optional[int] = None
+    silence_duration_ms: Optional[int] = None
+    idle_timeout_ms: Optional[int] = None
 
 
 class XAIRealtimeProvider:
@@ -102,10 +113,13 @@ class XAIRealtimeProvider:
 
     BASE_URL = DEFAULT_XAI_REALTIME_BASE_URL
     DEFAULT_VOICE = DEFAULT_XAI_VOICE
+    DEFAULT_MODEL = DEFAULT_XAI_MODEL
 
     def __init__(
         self,
         api_key: Optional[str] = None,
+        model: Optional[str] = None,
+        reasoning_effort: Optional[str] = None,
         voice: Optional[str] = None,
         audio_format: XAIAudioFormat = XAIAudioFormat.PCMU,
         sample_rate: int = DEFAULT_TELEPHONY_RATE,
@@ -115,6 +129,9 @@ class XAIRealtimeProvider:
         Args:
             api_key: xAI API key. If not provided, reads from XAI_API_KEY
                 environment variable.
+            model: Voice model to use. Defaults to grok-voice-think-fast-1.0.
+            reasoning_effort: Optional reasoning effort query parameter.
+                xAI supports "high" and "none"; None uses the server default.
             voice: Voice to use. One of: Ara, Rex, Sal, Eve, Leo. Defaults to Ara.
             audio_format: Audio format for input/output. Defaults to PCMU (G.711 μ-law)
                 which is optimal for telephony (no conversion needed).
@@ -128,6 +145,14 @@ class XAIRealtimeProvider:
         if not self.api_key:
             raise ValueError("xAI API key not provided. Set XAI_API_KEY env var.")
 
+        if reasoning_effort not in {None, "high", "none"}:
+            raise ValueError(
+                "xAI provider supports reasoning_effort='high', 'none', or None "
+                f"(got {reasoning_effort!r})"
+            )
+
+        self.model = model or self.DEFAULT_MODEL
+        self.reasoning_effort = reasoning_effort
         self.voice = voice or self.DEFAULT_VOICE
         self.audio_format = audio_format
         self.sample_rate = sample_rate
@@ -144,11 +169,17 @@ class XAIRealtimeProvider:
 
         return self.ws.state == State.OPEN
 
+    def _build_connect_url(self) -> str:
+        query = {"model": self.model}
+        if self.reasoning_effort is not None:
+            query["reasoning.effort"] = self.reasoning_effort
+        return f"{self.BASE_URL}?{urlencode(query)}"
+
     @websocket_retry
     async def connect(self) -> None:
         """Establish a WebSocket connection to the xAI Realtime API.
 
-        Opens a new WebSocket connection and waits for the conversation.created
+        Opens a new WebSocket connection and waits for the initial session event
         event to confirm successful connection.
 
         Raises:
@@ -162,18 +193,25 @@ class XAIRealtimeProvider:
             "Content-Type": "application/json",
         }
 
-        logger.info(f"xAI Realtime API: Connecting to {self.BASE_URL}")
-        self.ws = await websockets.connect(self.BASE_URL, additional_headers=headers)
+        url = self._build_connect_url()
+        logger.info(f"xAI Realtime API: Connecting to {url}")
+        self.ws = await websockets.connect(url, additional_headers=headers)
 
-        # Wait for conversation.created event
+        # Wait for initial session event. xAI previously emitted
+        # conversation.created here and now emits session.created.
         response = await self.ws.recv()
         data = json.loads(response)
-        if data.get("type") != "conversation.created":
-            raise RuntimeError(f"Expected conversation.created, got {data.get('type')}")
+        logger.debug(f"xAI Realtime API: handshake event payload: {response}")
+        event_type = data.get("type")
+        if event_type not in {"conversation.created", "session.created"}:
+            raise RuntimeError(
+                "Expected conversation.created or session.created, "
+                f"got {event_type}"
+            )
 
-        # Store conversation/session ID for debugging
-        conv_data = data.get("conversation", {})
-        self.session_id = conv_data.get("id") or data.get("event_id")
+        # Store conversation/session ID for debugging.
+        session_data = data.get("session") or data.get("conversation") or {}
+        self.session_id = session_data.get("id") or data.get("event_id")
         logger.info(
             f"xAI Realtime API: Connected successfully (session_id={self.session_id})"
         )
@@ -211,8 +249,16 @@ class XAIRealtimeProvider:
         """Build the turn detection configuration."""
         if vad_config.mode == XAIVADMode.MANUAL:
             return {"type": None}
-        else:
-            return {"type": "server_vad"}
+        config: Dict[str, object] = {"type": "server_vad"}
+        if vad_config.threshold is not None:
+            config["threshold"] = vad_config.threshold
+        if vad_config.prefix_padding_ms is not None:
+            config["prefix_padding_ms"] = vad_config.prefix_padding_ms
+        if vad_config.silence_duration_ms is not None:
+            config["silence_duration_ms"] = vad_config.silence_duration_ms
+        if vad_config.idle_timeout_ms is not None:
+            config["idle_timeout_ms"] = vad_config.idle_timeout_ms
+        return config
 
     def _format_tools_for_api(self, tools: List[Tool]) -> List[Dict]:
         """Format tools for the xAI API.
@@ -274,6 +320,7 @@ class XAIRealtimeProvider:
             if event_type == "session.updated":
                 self._current_vad_config = vad_config
                 logger.info("xAI Realtime API: Session configured successfully")
+                logger.debug(f"xAI Realtime API: session.updated payload: {response}")
                 break
             elif event_type == "error":
                 error = data.get("error", {})
@@ -290,6 +337,16 @@ class XAIRealtimeProvider:
         """
         if not self.is_connected:
             raise RuntimeError("Not connected to API")
+
+        gain_env = os.environ.get("TAU2_XAI_INPUT_GAIN")
+        if gain_env and self.audio_format == XAIAudioFormat.PCMU:
+            import audioop
+
+            gain = float(gain_env)
+            if gain != 1.0:
+                lin = audioop.ulaw2lin(audio_data, 2)
+                lin = audioop.mul(lin, 2, gain)
+                audio_data = audioop.lin2ulaw(lin, 2)
 
         audio_b64 = base64.b64encode(audio_data).decode("utf-8")
         message = {"type": "input_audio_buffer.append", "audio": audio_b64}
@@ -319,7 +376,55 @@ class XAIRealtimeProvider:
         await self.ws.send(json.dumps(item_create))
 
         if request_response:
-            await self.ws.send(json.dumps({"type": "response.create"}))
+            await self.create_response()
+
+    async def send_synthetic_agent_context(
+        self, content: str, request_response: bool = True
+    ) -> None:
+        """Send custom agent-side text context as a synthetic conversation item."""
+        if not self.is_connected:
+            raise RuntimeError("Not connected to API")
+
+        item_create = {
+            "type": "conversation.item.create",
+            "item": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": content}],
+            },
+        }
+        await self.ws.send(json.dumps(item_create))
+
+        if request_response:
+            await self.create_response()
+
+    async def create_response(self) -> None:
+        """Ask xAI to produce the next assistant response."""
+        if not self.is_connected:
+            raise RuntimeError("Not connected to API")
+        await self.ws.send(json.dumps({"type": "response.create"}))
+
+    async def truncate_item(
+        self,
+        item_id: str,
+        content_index: int,
+        audio_end_ms: int,
+    ) -> None:
+        """Tell the server how much assistant audio was played."""
+        if not self.is_connected:
+            raise RuntimeError("Not connected to API")
+
+        truncate_event = {
+            "type": "conversation.item.truncate",
+            "item_id": item_id,
+            "content_index": content_index,
+            "audio_end_ms": audio_end_ms,
+        }
+        await self.ws.send(json.dumps(truncate_event))
+        logger.debug(
+            f"xAI truncate sent: item_id={item_id}, content_index={content_index}, "
+            f"audio_end_ms={audio_end_ms}"
+        )
 
     async def receive_events(self) -> AsyncGenerator[BaseXAIEvent, None]:
         """Receive and yield events from the WebSocket connection.

@@ -44,6 +44,7 @@ from tau2.voice.audio_native.openai.events import (
     AudioTranscriptDeltaEvent,
     AudioTranscriptDoneEvent,
     FunctionCallArgumentsDoneEvent,
+    InputAudioTranscriptionCompletedEvent,
     ResponseDoneEvent,
     SpeechStartedEvent,
     SpeechStoppedEvent,
@@ -206,6 +207,14 @@ class DiscreteTimeOpenAIAdapter(DiscreteTimeAdapter):
             await self.provider.send_tool_result(call_id, result_str, request_response)
         self._pending_tool_results.clear()
 
+    async def _flush_pending_synthetic_agent_contexts(self) -> None:
+        for content, request_response in self._pending_synthetic_agent_contexts:
+            await self.provider.send_synthetic_agent_context(
+                content,
+                request_response,
+            )
+        self._pending_synthetic_agent_contexts.clear()
+
     async def _execute_tick(
         self,
         user_audio: bytes,
@@ -305,6 +314,17 @@ class DiscreteTimeOpenAIAdapter(DiscreteTimeAdapter):
         elif isinstance(event, SpeechStoppedEvent):
             logger.debug(f"Speech stopped detected at {event.audio_end_ms}ms")
             result.vad_events.append("speech_stopped")
+
+        elif isinstance(event, InputAudioTranscriptionCompletedEvent):
+            if event.transcript:
+                result.input_audio_transcripts.append(
+                    {
+                        "item_id": event.item_id,
+                        "content_index": event.content_index,
+                        "transcript": event.transcript,
+                    }
+                )
+            logger.debug(f"Input transcription: {event.transcript}")
 
         elif isinstance(event, FunctionCallArgumentsDoneEvent):
             if event.call_id and event.name:
