@@ -12,6 +12,7 @@ from rich.progress import Progress
 from tau2.data_model.simulation import Results
 from tau2.evaluator.evaluator import EvaluationType, evaluate_simulation
 from tau2.metrics.agent_metrics import compute_metrics
+from tau2.orchestrator.modes import CommunicationMode
 from tau2.utils.display import ConsoleDisplay
 from tau2.utils.io_utils import expand_paths
 
@@ -23,6 +24,15 @@ def is_solo_mode(results: Results) -> bool:
     if agent_implementation == "llm_agent_solo" and user_implementation == "dummy_user":
         return True
     return False
+
+
+def _simulation_communication_mode(simulation) -> CommunicationMode:
+    """Infer the evaluator mode for a stored simulation run."""
+    if simulation.mode == CommunicationMode.FULL_DUPLEX.value:
+        return CommunicationMode.FULL_DUPLEX
+    if simulation.ticks is not None:
+        return CommunicationMode.FULL_DUPLEX
+    return CommunicationMode.HALF_DUPLEX
 
 
 def compute_simulation_rewards(
@@ -60,6 +70,7 @@ def compute_simulation_rewards(
                 simulation=simulation,
                 evaluation_type=evaluation_type,
                 solo_mode=solo_mode,
+                mode=_simulation_communication_mode(simulation),
             )
 
             # Update the simulation with new reward info

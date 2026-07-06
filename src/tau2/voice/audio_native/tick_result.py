@@ -133,6 +133,12 @@ class TickResult(BaseModel):
         default="",
         description="Transcript text proportional to audio played this tick",
     )
+    input_audio_transcripts: List[dict[str, Any]] = Field(
+        default_factory=list,
+        description=(
+            "User audio transcripts observed by the agent provider this tick."
+        ),
+    )
 
     # --- Interruption tracking ---
     was_truncated: bool = Field(

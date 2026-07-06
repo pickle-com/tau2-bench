@@ -50,7 +50,7 @@ from tau2.config import (
     DEFAULT_YIELD_THRESHOLD_WHEN_INTERRUPTING_SECONDS,
 )
 from tau2.data_model.audio_effects import EffectTimeline
-from tau2.data_model.message import Message, Tick
+from tau2.data_model.message import Message, Tick, ticks_to_tool_replay_messages
 from tau2.data_model.persona import PersonaConfig
 from tau2.data_model.tasks import Action, EnvAssertion, RewardType, Task
 from tau2.data_model.voice import SpeechComplexity, SpeechEnvironment, VoiceSettings
@@ -1348,6 +1348,16 @@ class SimulationRun(BaseModel):
                 msg.turn_idx = i
             return messages
         return []
+
+    def get_tool_replay_messages(self) -> list[Message]:
+        """Return executable tool-call/result replay messages.
+
+        Full-duplex voice runs store speech and tool events on ticks. This helper
+        keeps only the tool-call/result pairs in Environment.set_state order.
+        """
+        if self.ticks is not None:
+            return ticks_to_tool_replay_messages(self.ticks)
+        return self.get_messages()
 
 
 class SimulationIndexEntry(BaseModel):

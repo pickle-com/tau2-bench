@@ -650,6 +650,7 @@ class Tick(BaseModel):
         user_tool_calls: Tool calls made by the user during this tick.
         agent_tool_results: Tool results from agent's tool calls during this tick.
         user_tool_results: Tool results from user's tool calls during this tick.
+        agent_synthetic_context: Custom agent-side context emitted during this tick.
         user_transcript: Proportional user input transcription (filled by post-processing).
     """
 
@@ -661,6 +662,7 @@ class Tick(BaseModel):
     user_tool_calls: list[ToolCall] = Field(default_factory=list)
     agent_tool_results: list[ToolMessage] = Field(default_factory=list)
     user_tool_results: list[ToolMessage] = Field(default_factory=list)
+    agent_synthetic_context: list[dict] = Field(default_factory=list)
     user_transcript: Optional[str] = None
 
     # --- Timing metadata ---
@@ -677,11 +679,22 @@ class Tick(BaseModel):
         """Return all messages in this tick as a flat list."""
         messages: list[Message] = []
         # Include agent chunk with tool_calls if any were made
-        if self.agent_chunk or self.agent_tool_calls:
+        if (
+            self.agent_tool_calls
+            or (
+                self.agent_chunk is not None
+                and self.agent_chunk.is_tool_call()
+            )
+            or (self.agent_chunk is not None and self.agent_chunk.has_content())
+        ):
             agent_msg = AssistantMessage(
                 role="assistant",
                 content=self.agent_chunk.content if self.agent_chunk else None,
-                tool_calls=self.agent_tool_calls or None,
+                tool_calls=(
+                    self.agent_tool_calls
+                    or (self.agent_chunk.tool_calls if self.agent_chunk else None)
+                    or None
+                ),
                 timestamp=(
                     self.agent_chunk.timestamp if self.agent_chunk else self.timestamp
                 ),
@@ -710,11 +723,19 @@ class Tick(BaseModel):
             messages.append(agent_msg)
         messages.extend(self.agent_tool_results)
         # Include user chunk with tool_calls if any were made
-        if self.user_chunk or self.user_tool_calls:
+        if (
+            self.user_tool_calls
+            or (self.user_chunk is not None and self.user_chunk.is_tool_call())
+            or (self.user_chunk is not None and self.user_chunk.has_content())
+        ):
             user_msg = UserMessage(
                 role="user",
                 content=self.user_chunk.content if self.user_chunk else None,
-                tool_calls=self.user_tool_calls or None,
+                tool_calls=(
+                    self.user_tool_calls
+                    or (self.user_chunk.tool_calls if self.user_chunk else None)
+                    or None
+                ),
                 timestamp=(
                     self.user_chunk.timestamp if self.user_chunk else self.timestamp
                 ),
@@ -743,6 +764,51 @@ class Tick(BaseModel):
             messages.append(user_msg)
         messages.extend(self.user_tool_results)
         return messages
+
+
+def ticks_to_tool_replay_messages(ticks: list[Tick]) -> list[Message]:
+    """Convert full-duplex ticks into Environment.set_state replay messages.
+
+    The replay stream contains executable tool-call/result pairs in orchestrator
+    order. Speech-only chunks stay in the tick trajectory.
+    """
+    messages: list[Message] = []
+
+    for tick in ticks:
+        if tick.user_tool_calls:
+            user_msg = UserMessage(
+                role="user",
+                content=tick.user_chunk.content if tick.user_chunk else None,
+                tool_calls=tick.user_tool_calls,
+                timestamp=tick.user_chunk.timestamp if tick.user_chunk else tick.timestamp,
+                contains_speech=(
+                    tick.user_chunk.contains_speech if tick.user_chunk else False
+                ),
+            )
+            messages.append(user_msg)
+            messages.extend(tick.user_tool_results)
+
+        if tick.agent_tool_calls:
+            agent_msg = AssistantMessage(
+                role="assistant",
+                content=tick.agent_chunk.content if tick.agent_chunk else None,
+                tool_calls=tick.agent_tool_calls,
+                timestamp=(
+                    tick.agent_chunk.timestamp if tick.agent_chunk else tick.timestamp
+                ),
+                contains_speech=(
+                    tick.agent_chunk.contains_speech if tick.agent_chunk else False
+                ),
+            )
+            messages.append(agent_msg)
+            messages.extend(tick.agent_tool_results)
+
+    result: list[Message] = []
+    for i, msg in enumerate(messages):
+        msg = deepcopy(msg)
+        msg.turn_idx = i
+        result.append(msg)
+    return result
 
 
 # ---------------------------------------------------------------------------

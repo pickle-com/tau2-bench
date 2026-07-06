@@ -2,12 +2,7 @@ from typing import Callable
 
 from loguru import logger
 
-from tau2.data_model.message import (
-    AssistantMessage,
-    Message,
-    Tick,
-    UserMessage,
-)
+from tau2.data_model.message import Message, Tick, ticks_to_tool_replay_messages
 from tau2.data_model.simulation import DBCheck, EnvAssertionCheck, RewardInfo
 from tau2.data_model.tasks import RewardType, Task
 from tau2.environment.environment import Environment
@@ -180,44 +175,7 @@ class FullDuplexEnvironmentEvaluator(EvaluatorBase[Tick]):
             List of Messages in the format expected by Environment.set_state():
             [UserMessage with tool_calls, ToolMessage results, AssistantMessage with tool_calls, ToolMessage results, ...]
         """
-        messages: list[Message] = []
-
-        for tick in ticks:
-            # 1. User tool calls first (processed before agent in orchestrator)
-            if tick.user_tool_calls:
-                user_msg = UserMessage(
-                    role="user",
-                    content=tick.user_chunk.content if tick.user_chunk else None,
-                    tool_calls=tick.user_tool_calls,
-                    timestamp=(
-                        tick.user_chunk.timestamp if tick.user_chunk else tick.timestamp
-                    ),
-                    contains_speech=(
-                        tick.user_chunk.contains_speech if tick.user_chunk else False
-                    ),
-                )
-                messages.append(user_msg)
-                messages.extend(tick.user_tool_results)
-
-            # 2. Agent tool calls second
-            if tick.agent_tool_calls:
-                agent_msg = AssistantMessage(
-                    role="assistant",
-                    content=tick.agent_chunk.content if tick.agent_chunk else None,
-                    tool_calls=tick.agent_tool_calls,
-                    timestamp=(
-                        tick.agent_chunk.timestamp
-                        if tick.agent_chunk
-                        else tick.timestamp
-                    ),
-                    contains_speech=(
-                        tick.agent_chunk.contains_speech if tick.agent_chunk else False
-                    ),
-                )
-                messages.append(agent_msg)
-                messages.extend(tick.agent_tool_results)
-
-        return messages
+        return ticks_to_tool_replay_messages(ticks)
 
     @classmethod
     def calculate_reward(

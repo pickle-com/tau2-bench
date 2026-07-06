@@ -121,3 +121,7 @@ class StreamingTelephonyConverter:
         """Reset resample state. Call on interruption or new session."""
         self._input_resample_state = None
         self._output_resample_state = None
+
+    def reset_output(self) -> None:
+        """Reset provider-output resample state after interrupted playback."""
+        self._output_resample_state = None

@@ -322,6 +322,7 @@ def _extract_event_fields(event_type: str, raw_data: dict) -> dict:
             "arguments",
             "audio_start_ms",
             "audio_end_ms",
+            "content_index",
         ]:
             if key in raw_data:
                 result[key] = raw_data[key]
