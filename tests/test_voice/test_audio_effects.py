@@ -14,12 +14,18 @@ Tests cover:
 """
 
 from pathlib import Path
+from threading import Lock
+from time import sleep
 
 import numpy as np
 import pytest
 
 from tau2.data_model.audio import AudioData, AudioEncoding, AudioFormat
+from tau2.data_model.audio_effects import UserSpeechInsert
 from tau2.data_model.voice import SynthesisConfig
+from tau2.voice.synthesis.audio_effects import (
+    speech_generator as speech_generator_module,
+)
 from tau2.voice.synthesis.audio_effects.effects import (
     StreamingTelephonyConverter,
     apply_burst_noise,
@@ -42,6 +48,9 @@ from tau2.voice.synthesis.audio_effects.scheduler import (
     EffectSchedulerState,
     ScheduledEffect,
     generate_turn_effects,
+)
+from tau2.voice.synthesis.audio_effects.speech_generator import (
+    OutOfTurnSpeechGenerator,
 )
 from tau2.voice.utils.audio_io import save_wav_file
 from tau2.voice.utils.audio_preprocessing import audio_data_to_numpy
@@ -108,6 +117,47 @@ def short_pcm16_audio() -> AudioData:
         ),
         audio_path=None,
     )
+
+
+def test_out_of_turn_speech_generation_respects_tts_worker_cap(
+    monkeypatch: pytest.MonkeyPatch,
+    sample_pcm16_audio: AudioData,
+) -> None:
+    """Out-of-turn TTS pre-generation stays under the configured worker cap."""
+    active_calls = 0
+    max_active_calls = 0
+    lock = Lock()
+
+    def fake_synthesize_voice(*args, **kwargs) -> AudioData:
+        nonlocal active_calls, max_active_calls
+        with lock:
+            active_calls += 1
+            max_active_calls = max(max_active_calls, active_calls)
+        sleep(0.02)
+        with lock:
+            active_calls -= 1
+        return sample_pcm16_audio
+
+    monkeypatch.setenv("TAU2_ELEVENLABS_OUT_OF_TURN_TTS_MAX_WORKERS", "2")
+    monkeypatch.setattr(
+        speech_generator_module,
+        "synthesize_voice",
+        fake_synthesize_voice,
+    )
+
+    generator = OutOfTurnSpeechGenerator(
+        voice_id="test_voice",
+        target_sample_rate=sample_pcm16_audio.format.sample_rate,
+    )
+    items = [
+        UserSpeechInsert(text=f"[cough] {idx}", type="vocal_tic")
+        for idx in range(5)
+    ]
+
+    generator.generate_all(items)
+
+    assert max_active_calls <= 2
+    assert len(generator.generated_audio) == len(items)
 
 
 @pytest.fixture

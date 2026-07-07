@@ -116,6 +116,64 @@ class TestCommunicationModes:
                 task=task,
             )
 
+    def test_full_duplex_initializes_streaming_user_once(self):
+        """Full-duplex setup should not reset expensive user audio state."""
+        from tau2.registry import registry
+        from tau2.run import get_tasks
+
+        class _CountingStreamingAgent:
+            def get_init_state(self, message_history=None):
+                return object()
+
+            def get_next_chunk(self, state, participant_chunk=None, tool_results=None):
+                return (
+                    AssistantMessage(role="assistant", content=None),
+                    state,
+                )
+
+            @classmethod
+            def is_stop(cls, message):
+                return False
+
+            def set_seed(self, seed):
+                pass
+
+        class _CountingStreamingUser:
+            def __init__(self):
+                self.init_count = 0
+
+            def get_init_state(self, message_history=None):
+                self.init_count += 1
+                return object()
+
+            def get_next_chunk(self, state, participant_chunk=None, tool_results=None):
+                return (
+                    UserMessage(role="user", content=None, contains_speech=False),
+                    state,
+                )
+
+            @classmethod
+            def is_stop(cls, message):
+                return False
+
+            def set_seed(self, seed):
+                pass
+
+        env = registry.get_env_constructor("mock")()
+        task = get_tasks("mock", task_ids=["create_task_1"])[0]
+        user = _CountingStreamingUser()
+
+        orchestrator = FullDuplexOrchestrator(
+            domain="mock",
+            agent=_CountingStreamingAgent(),
+            user=user,
+            environment=env,
+            task=task,
+        )
+        orchestrator.initialize()
+
+        assert user.init_count == 1
+
 
 class TestMessageEnhancements:
     """Test message model enhancements for streaming."""
