@@ -112,6 +112,17 @@ every domain include conversations where the mentor blocked a hand-off
 decision is auditable per simulation via
 `info.voice_timing_trace.mentor_events`.
 
+## Contribution ablation
+
+With the mentor prompt frozen, raising the mentor's reasoning effort from
+low to high moved telecom 0.649 → 0.781 (paired same-tasks: 24 recovered /
+9 regressed) and the gate block rate from 23% to 30%; by comparison, a
+round of prompt-wording iteration was worth a net +1 task. Both figures are
+internal same-stack, single-trial comparisons — the official vanilla row
+does not reproduce on this stack (see the caveats above), so neither number
+is comparable to it. The dominant contribution of this scaffold is the
+supervisor's reasoning budget, not its prompt wording.
+
 ## Reproduction
 
 ### Credentials
