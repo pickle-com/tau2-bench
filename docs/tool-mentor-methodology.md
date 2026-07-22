@@ -125,6 +125,11 @@ supervisor's reasoning budget, not its prompt wording.
 
 ## Reproduction
 
+### Setup
+
+`uv sync --all-extras` from a clone of this branch (plain `uv sync` omits the
+voice extras this pipeline needs).
+
 ### Credentials
 
 `ELEVENLABS_API_KEY` (user-sim TTS), `DEEPGRAM_API_KEY` (user-sim
@@ -153,14 +158,15 @@ python -m tau2.cli run --domain {retail|airline|telecom} \
   --xai-vad-threshold 0.1 --xai-vad-silence-duration-ms 1200 \
   --xai-vad-prefix-padding-ms 600 \
   --num-trials 1 --max-steps 6000 --max-concurrency 10 \
-  --user voice_streaming_user_simulator --user-llm gpt-5.5-2026-04-23 \
-  --user-llm-args '{"reasoning_effort": "xhigh"}' \
+  --user-llm gpt-5.5-2026-04-23 --user-llm-args '{"reasoning_effort": "xhigh"}' \
   --tool-mentor --tool-mentor-model gemini/gemini-3.5-flash \
   --tool-mentor-reasoning-effort high \
   --tool-mentor-read-timeout 10.0 --tool-mentor-write-timeout 15.0 \
   --tool-mentor-realtime-wait --tool-mentor-realtime-workers 5 \
   --speech-complexity regular --skip-voice-id-check --auto-resume
 ```
+
+(The voice user simulator is auto-selected in `--audio-native` mode.)
 
 Notes:
 
